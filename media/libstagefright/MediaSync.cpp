@@ -684,6 +684,23 @@ void MediaSync::onFrameAvailableFromInput() {
 #endif
     if (status != NO_ERROR) {
         ALOGE("detaching buffer from input failed (%d)", status);
+
+        // The buffer is still acquired if detach fails. Return it before
+        // leaving so the outstanding-buffer accounting cannot drift and
+        // eventually block further input.
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_MEDIA_MIGRATION)
+        status_t releaseStatus =
+                mInput->releaseBuffer(bufferItem.mGraphicBuffer, bufferItem.mFence);
+#else
+        status_t releaseStatus = mInput->releaseBuffer(
+                bufferItem.mSlot, bufferItem.mFrameNumber, bufferItem.mFence);
+#endif
+        ALOGE_IF(releaseStatus != NO_ERROR,
+                "releasing buffer after detach failure failed (%d)", releaseStatus);
+
+        --mNumOutstandingBuffers;
+        mReleaseCondition.signal();
+
         if (status == NO_INIT) {
             // If the input has been abandoned, move on.
             onAbandoned_l(true /* isInput */);
@@ -860,7 +877,7 @@ void MediaSync::returnBufferToInput_l(
     status_t status = mInput->attachBuffer(oldBuffer);
     ALOGE_IF(status != NO_ERROR, "attaching buffer to input failed (%d)", status);
     if (status == NO_ERROR) {
-        mInput->releaseBuffer(oldBuffer, fence);
+        status = mInput->releaseBuffer(oldBuffer, fence);
         ALOGE_IF(status != NO_ERROR, "releasing buffer to input failed (%d)", status);
     }
 #else
