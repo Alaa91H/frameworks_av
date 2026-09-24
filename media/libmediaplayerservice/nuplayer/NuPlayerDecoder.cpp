@@ -362,6 +362,19 @@ void NuPlayer::Decoder::onConfigure(const sp<AMessage> &format) {
     mCodec->getName(&mComponentName);
 
     status_t err;
+    auto releaseCodecAndRestoreSurface = [this](const char* context) {
+        if (mCodec != NULL) {
+            mCodec->release();
+            mCodec.clear();
+        }
+        if (mSurface != NULL) {
+            status_t connectErr = nativeWindowConnect(mSurface.get(), context);
+            ALOGW_IF(connectErr != NO_ERROR,
+                    "[%s] failed to reconnect native window after codec error, error=%d",
+                    mComponentName.c_str(), connectErr);
+        }
+    };
+
     if (mSurface != NULL) {
         // disconnect from surface as MediaCodec will reconnect
         err = nativeWindowDisconnect(mSurface.get(), "onConfigure");
@@ -389,8 +402,7 @@ void NuPlayer::Decoder::onConfigure(const sp<AMessage> &format) {
 
     if (err != OK) {
         ALOGE("Failed to configure [%s] decoder (err=%d)", mComponentName.c_str(), err);
-        mCodec->release();
-        mCodec.clear();
+        releaseCodecAndRestoreSurface("onConfigure(configure-error)");
         handleError(err);
         return;
     }
@@ -403,8 +415,7 @@ void NuPlayer::Decoder::onConfigure(const sp<AMessage> &format) {
     if (err != OK) {
         ALOGE("Failed to get input/output format from [%s] decoder (err=%d)",
                 mComponentName.c_str(), err);
-        mCodec->release();
-        mCodec.clear();
+        releaseCodecAndRestoreSurface("onConfigure(format-error)");
         handleError(err);
         return;
     }
@@ -431,8 +442,7 @@ void NuPlayer::Decoder::onConfigure(const sp<AMessage> &format) {
     err = mCodec->start();
     if (err != OK) {
         ALOGE("Failed to start [%s] decoder (err=%d)", mComponentName.c_str(), err);
-        mCodec->release();
-        mCodec.clear();
+        releaseCodecAndRestoreSurface("onConfigure(start-error)");
         handleError(err);
         return;
     }
@@ -532,7 +542,12 @@ void NuPlayer::Decoder::onResume(bool notifyComplete) {
         handleError(NO_INIT);
         return;
     }
-    mCodec->start();
+
+    status_t err = mCodec->start();
+    if (err != OK) {
+        ALOGE("[%s] failed to resume decoder (err=%d)", mComponentName.c_str(), err);
+        handleError(err);
+    }
 }
 
 void NuPlayer::Decoder::doFlush(bool notifyComplete) {
