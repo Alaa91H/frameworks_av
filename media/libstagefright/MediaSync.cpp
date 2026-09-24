@@ -693,8 +693,7 @@ void MediaSync::onFrameAvailableFromInput() {
                 mInput->releaseBuffer(bufferItem.mGraphicBuffer, bufferItem.mFence);
 #else
         status_t releaseStatus = mInput->releaseBuffer(
-                bufferItem.mSlot, bufferItem.mFrameNumber,
-                EGL_NO_DISPLAY, EGL_NO_SYNC_KHR, bufferItem.mFence);
+                bufferItem.mSlot, bufferItem.mFrameNumber, bufferItem.mFence);
 #endif
         ALOGE_IF(releaseStatus != NO_ERROR,
                 "releasing buffer after detach failure failed (%d)", releaseStatus);
