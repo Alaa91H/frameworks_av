@@ -377,7 +377,7 @@ bool Camera3OutputStream::processRemovedConsumerLocked(
         (*removedConsumer).second.mHandoutTotalBufferCount--;
         sp<Camera3StreamBufferFreedListener> callback = mBufferFreedListener.promote();
         if (callback != nullptr) {
-            callback->onBufferFreed(mId, anwBuffer->handle);
+            callback->onBufferFreed(mId, graphicBuffer->handle);
         }
     } else {
         ALOGE("%s: Stream %d: Error cancelling buffer from removed native window:"
