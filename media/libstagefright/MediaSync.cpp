@@ -155,6 +155,18 @@ status_t MediaSync::setSurface(const sp<MediaSurfaceType> &output) {
             returnBufferToInput_l(mBuffersSentToOutput.valueAt(0), Fence::NO_FENCE);
             mBuffersSentToOutput.removeItemsAt(0);
         }
+
+        if (output == NULL) {
+            // Input can remain connected after the output surface is removed.
+            // Return any detached frames immediately instead of leaving them
+            // queued for a drain that no longer has a render target.
+            while (!mBufferItems.empty()) {
+                BufferItem *bufferItem = &*mBufferItems.begin();
+                returnBufferToInput_l(bufferItem->mGraphicBuffer, bufferItem->mFence);
+                mBufferItems.erase(mBufferItems.begin());
+            }
+            mNextBufferItemMediaUs = -1;
+        }
     }
 
     mOutput = output;
@@ -729,6 +741,13 @@ void MediaSync::onFrameAvailableFromInput() {
         return;
     }
 
+    if (mOutput == NULL) {
+        // setSurface(nullptr) is valid unless VSYNC is the sync source. Keep
+        // the input queue flowing while there is no render target.
+        returnBufferToInput_l(bufferItem.mGraphicBuffer, bufferItem.mFence);
+        return;
+    }
+
     mBufferItems.push_back(bufferItem);
 
     if (mBufferItems.size() == 1) {
@@ -890,9 +909,19 @@ void MediaSync::returnBufferToInput_l(
     }
 #endif
 
-    // Notify any waiting onFrameAvailable calls.
+    // Notify any waiting onFrameAvailable calls before handling an abandoned
+    // input. onAbandoned_l() broadcasts the same condition, but the accounting
+    // must already reflect that this buffer is no longer outstanding.
     --mNumOutstandingBuffers;
     mReleaseCondition.signal();
+
+    if (status == NO_INIT) {
+        // The input BufferQueue has been abandoned. Stop using both sides of
+        // MediaSync instead of leaving the instance active and repeatedly
+        // attempting to return buffers to a dead consumer.
+        onAbandoned_l(true /* isInput */);
+        return;
+    }
 
     if (status == NO_ERROR) {
         ALOGV("released buffer %#llx to input", (long long)oldBuffer->getId());
@@ -903,7 +932,9 @@ void MediaSync::onAbandoned_l(bool isInput) {
     ALOGE("the %s has abandoned me", (isInput ? "input" : "output"));
     if (!mIsAbandoned) {
         if (isInput) {
-            mOutput->disconnect(NATIVE_WINDOW_API_MEDIA);
+            if (mOutput != nullptr) {
+                mOutput->disconnect(NATIVE_WINDOW_API_MEDIA);
+            }
         } else if (mInput != nullptr) {
             // mInput is only assigned in createInputSurface(); guard against
             // the case where the process hosting the output Surface's
